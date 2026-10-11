@@ -1,16 +1,18 @@
 ## What this is
-Given a ticker, produce an evaluation of the stock: an interpretation of
-recent price and sector performance, and a recommendation.
+Given a company name, resolve it to a ticker, research it (price action,
+sector performance, financials), and produce a bull/bear thesis.
 
 ## Stack — do not substitute without asking
-LangGraph (Python SDK) · Llama 3.1 via Ollama (http://localhost:11434)
+LangGraph (Python SDK) · Gemini (google-genai)
 Streamlit · Python 3.12+ · pip + venv
 
 ## Architecture
-Static fan-out with branching (fixed node set, no Send()):
-  start -> {fetch_price_history, fetch_sector_performance}  (parallel)
-  both -> research
-  research -> conditional edge -> recommend | insufficient_data -> back to research
+Static fan-out (fixed node set, no Send()):
+  start (resolve_ticker: company name -> ticker)
+    -> not found / ambiguous -> end (surfaced as an error to the UI;
+       disambiguation among multiple matches is handled in the UI, not the graph)
+    -> resolved -> fan-out parallel: {fetch_price_history, fetch_sector_performance, fetch_financials}
+    -> synthesize -> bull/bear thesis -> end
 
 ## Hard rules
 1. The model NEVER states a figure from its own weights. Every
@@ -22,6 +24,8 @@ Static fan-out with branching (fixed node set, no Send()):
 
 ## Repo layout
 src/tools/     data fetchers (yfinance)
+src/nodes/     one graph node per file
+src/graph.py   wires nodes into the LangGraph graph
 src/prompts/   prompt templates
 app.py         Streamlit entrypoint
 tests/
