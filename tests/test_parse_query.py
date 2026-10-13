@@ -2,6 +2,7 @@ import pytest
 
 from src.nodes import parse_query as module
 from src.nodes.parse_query import parse_query
+from src.state import AgentState
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ def stub(monkeypatch):
 
 def test_resolved_company_asks_nothing(stub):
     calls = stub(["Tesla"])
-    result = parse_query({"user_query": "What do you think of Tesla stock?"})
+    result = parse_query(AgentState(user_query="What do you think of Tesla stock?"))
     assert result["company_name"] == "Tesla"
     assert result["resolution"].ticker == "TSLA"
     assert result["clarifying_question"] is None
@@ -33,7 +34,7 @@ def test_resolved_company_asks_nothing(stub):
 
 def test_ticker_ambiguity_is_passed_through_without_question(stub):
     calls = stub(["Apple"])
-    result = parse_query({"user_query": "Is Apple a buy?"})
+    result = parse_query(AgentState(user_query="Is Apple a buy?"))
     assert result["resolution"].is_present == "ambiguous"
     assert result["clarifying_question"] is None
     assert calls == []
@@ -41,7 +42,7 @@ def test_ticker_ambiguity_is_passed_through_without_question(stub):
 
 def test_ticker_not_found_is_passed_through_without_question(stub):
     calls = stub(["Some Nonexistent Company"])
-    result = parse_query({"user_query": "Thoughts on Some Nonexistent Company?"})
+    result = parse_query(AgentState(user_query="Thoughts on Some Nonexistent Company?"))
     assert result["resolution"].is_present == "no"
     assert result["clarifying_question"] is None
     assert calls == []
@@ -49,7 +50,7 @@ def test_ticker_not_found_is_passed_through_without_question(stub):
 
 def test_no_company_mentioned_asks_which(stub):
     calls = stub([])
-    result = parse_query({"user_query": "What's the weather?"})
+    result = parse_query(AgentState(user_query="What's the weather?"))
     assert result["company_name"] is None
     assert result["clarifying_question"] == "QUESTION"
     assert calls[0]["options"] == []
@@ -57,7 +58,7 @@ def test_no_company_mentioned_asks_which(stub):
 
 def test_multiple_companies_asks_to_pick_one(stub):
     calls = stub(["Tesla", "Microsoft"])
-    result = parse_query({"user_query": "Tesla or Microsoft?"})
+    result = parse_query(AgentState(user_query="Tesla or Microsoft?"))
     assert result["company_name"] is None
     assert result["clarifying_question"] == "QUESTION"
     assert calls[0]["options"] == ["Tesla", "Microsoft"]

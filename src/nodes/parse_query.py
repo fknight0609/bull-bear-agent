@@ -5,12 +5,12 @@ question instead. Ticker lookup outcomes (yes / no / ambiguous) are passed throu
 
 import os
 from pathlib import Path
-from typing import Optional, TypedDict
 
 from dotenv import load_dotenv
 from google import genai
 from pydantic import BaseModel
 
+from src.state import AgentState
 from src.tools.resolve_ticker import TickerResolution, resolve_ticker
 
 MODEL = "gemini-3.8-flash"
@@ -21,13 +21,6 @@ load_dotenv()
 
 class ParsedQuery(BaseModel):
     companies: list[str] = []
-
-
-class ParseQueryState(TypedDict, total=False):
-    user_query: str
-    company_name: Optional[str]
-    resolution: TickerResolution
-    clarifying_question: Optional[str]
 
 
 def _client() -> genai.Client:
@@ -57,9 +50,9 @@ def ask_clarifying_question(user_query: str, reason: str, options: list[str]) ->
     return response.text.strip()
 
 
-def parse_query(state: ParseQueryState) -> ParseQueryState:
-    """Identify the company in `state["user_query"]` and resolve it, or set `clarifying_question`."""
-    user_query = state["user_query"]
+def parse_query(state: AgentState) -> dict:
+    """Identify the company in `state.user_query` and resolve it, or set `clarifying_question`."""
+    user_query = state.user_query
     companies = extract_companies(user_query)
 
     if not companies:

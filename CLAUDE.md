@@ -7,12 +7,16 @@ LangGraph (Python SDK) · Gemini (google-genai)
 Streamlit · Python 3.12+ · pip + venv
 
 ## Architecture
-Static fan-out (fixed node set, no Send()):
-  start (resolve_ticker: company name -> ticker)
-    -> not found / ambiguous -> end (surfaced as an error to the UI;
-       disambiguation among multiple matches is handled in the UI, not the graph)
-    -> resolved -> fan-out parallel: {fetch_price_history, fetch_sector_performance, fetch_financials}
+Dynamic fan-out over a fixed set of workers (conditional edge returning a list of node names; no Send()):
+  parse_query (extract company -> resolve ticker)
+    -> clarifying question / not found / ambiguous -> end
+       (surfaced to the UI; disambiguation among candidates is handled in the UI, not the graph)
+    -> resolved -> dispatch (Gemini picks a subset of workers from a fixed list based on the query)
+    -> parallel: any of {price_history, sector_performance, financials} workers
+    -> each worker appends one Finding to state.findings
     -> synthesize -> bull/bear thesis -> end
+Workers are deterministic: no LLM calls inside workers.
+Planned later: a reviewer loop after the workers, capped by a review_round counter.
 
 ## Hard rules
 1. The model NEVER states a figure from its own weights. Every
