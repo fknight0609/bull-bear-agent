@@ -5,6 +5,7 @@ def test_exact_match():
     result = resolve_ticker("Apple Inc")
     assert result.is_present == "yes"
     assert result.ticker == "AAPL"
+    assert result.candidates == []
 
 
 def test_case_insensitive_and_whitespace():
@@ -25,10 +26,18 @@ def test_ambiguous_when_multiple_companies_match():
     assert result.ticker is None
 
 
+def test_ambiguous_result_has_sorted_candidates():
+    result = resolve_ticker("Apple")
+    assert len(result.candidates) > 1
+    assert result.candidates == sorted(result.candidates)
+    assert all("apple" in name.lower() for name in result.candidates)
+
+
 def test_not_present():
     result = resolve_ticker("Some Nonexistent Company")
     assert result.is_present == "no"
     assert result.ticker is None
+    assert result.candidates == []
 
 
 def test_empty_input_is_not_present():
