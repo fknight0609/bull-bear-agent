@@ -1,4 +1,5 @@
 import logging
+import time
 
 import streamlit as st
 
@@ -28,7 +29,9 @@ if st.button("Run"):
     log.addHandler(handler)
     try:
         log.info("Graph invoked: user_query=%r", text)
+        started = time.perf_counter()
         result = graph.invoke({"user_query": text})
+        log.info("Graph invoke took %.2fs", time.perf_counter() - started)
         state = AgentState.model_validate(result).model_dump(mode="json")
         log.info("Graph finished. Final state: %s", state)
         st.json(state)

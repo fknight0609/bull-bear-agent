@@ -4,44 +4,35 @@ If the node cannot tell which single company the user means, it asks a clarifyin
 question instead. Ticker lookup outcomes (yes / no / ambiguous) are passed through as-is."""
 
 import logging
-import os
-from functools import lru_cache
+import time
 from pathlib import Path
 
-from dotenv import load_dotenv
-from google import genai
 from pydantic import BaseModel
 
+from src.llm import MODEL, client
 from src.state import AgentState
 from src.tools.resolve_ticker import TickerResolution, resolve_ticker
 
-MODEL = "gemini-3.8-flash"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 log = logging.getLogger("advisor.parse_query")
-
-load_dotenv()
 
 
 class ParsedQuery(BaseModel):
     companies: list[str] = []
 
 
-@lru_cache(maxsize=1)
-def _client() -> genai.Client:
-    return genai.Client(api_key=os.environ["GEMINI_API_KEY"])
-
-
 def extract_companies(user_query: str) -> list[str]:
     """Ask Gemini which companies the user mentions; empty if none."""
     prompt = (PROMPTS_DIR / "parse_query.md").read_text(encoding="utf-8").format(user_query=user_query)
     log.info("Gemini call: extract companies (model=%s, prompt=parse_query.md)", MODEL)
-    response = _client().models.generate_content(
+    started = time.perf_counter()
+    response = client().models.generate_content(
         model=MODEL,
         contents=prompt,
         config={"response_mime_type": "application/json", "response_schema": ParsedQuery},
     )
-    log.info("Gemini response: %s", response.text)
+    log.info("Gemini response in %.2fs: %s", time.perf_counter() - started, response.text)
     companies = ParsedQuery.model_validate_json(response.text).companies
     return [c.strip() for c in companies if c.strip()]
 
@@ -54,8 +45,9 @@ def ask_clarifying_question(user_query: str, reason: str, options: list[str]) ->
         options="\n".join(f"- {o}" for o in options) or "(none)",
     )
     log.info("Gemini call: clarifying question (model=%s, reason=%r, options=%s)", MODEL, reason, options)
-    response = _client().models.generate_content(model=MODEL, contents=prompt)
-    log.info("Gemini response: %s", response.text.strip())
+    started = time.perf_counter()
+    response = client().models.generate_content(model=MODEL, contents=prompt)
+    log.info("Gemini response in %.2fs: %s", time.perf_counter() - started, response.text.strip())
     return response.text.strip()
 
 

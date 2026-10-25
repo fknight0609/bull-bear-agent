@@ -12,9 +12,9 @@ Update it when a decision changes.
 | resolve_ticker tool (CSV lookup) | done |
 | parse_query node (Gemini extracts company, resolves ticker, or asks to clarify) | done |
 | State schema (`src/state.py`) + CLAUDE.md architecture update | done |
-| Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | handed to coding window |
-| dispatch node | next to plan |
-| Worker nodes (x3) | not started |
+| Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | done |
+| dispatch node (`parse_query → dispatch → END`; shared Gemini client in `src/llm.py`) | done, check in debug UI |
+| Worker nodes (x3) + fan-out edge after dispatch | next |
 | synthesize node + `Thesis` model | not started |
 | Reviewer loop | later |
 | Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
@@ -67,6 +67,9 @@ parse_query
    it never fills gaps.
 7. **Disambiguation stays in the UI.** `TickerResolution` gains `candidates`
    so the UI has options to show.
+8. **Dispatch falls back to all three workers** when Gemini picks none or the
+   call fails. The company is already resolved, so a vague question gets the
+   full picture rather than another clarifying question.
 
 ## State schema (`src/state.py`)
 
@@ -135,8 +138,6 @@ through the nodes.
 
 ## Open questions
 
-- **dispatch:** prompt design. What happens if Gemini returns an empty list:
-  default to all three, or ask to clarify?
 - **synthesize:** the `Thesis` model shape. Where cross-source arithmetic
   (e.g. stock return minus sector return) lives: in state if the UI shows it,
   otherwise inside synthesize. Either way it is computed in Python (rule 2).
