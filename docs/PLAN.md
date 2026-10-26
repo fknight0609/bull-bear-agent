@@ -14,8 +14,8 @@ Update it when a decision changes.
 | State schema (`src/state.py`) + CLAUDE.md architecture update | done |
 | Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | done |
 | dispatch node (`parse_query → dispatch → END`; shared Gemini client in `src/llm.py`) | done, check in debug UI |
-| Worker nodes (x3) + fan-out edge after dispatch | next |
-| synthesize node + `Thesis` model | not started |
+| Worker nodes (x3) + fan-out edge after dispatch | done, check in debug UI |
+| synthesize node + `Thesis` model | next |
 | Reviewer loop | later |
 | Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
 | Supabase database | later, use not decided yet |
