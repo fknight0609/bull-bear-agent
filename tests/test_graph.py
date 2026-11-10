@@ -7,15 +7,14 @@ from src.nodes import financials as financials_module
 from src.nodes import parse_query as parse_module
 from src.nodes import price_history as price_history_module
 from src.nodes import sector_performance as sector_performance_module
-from src.state import AgentState
+from src.nodes import synthesize as synthesize_module
+from src.state import AgentState, Thesis
 from tests.test_workers import FUNDAMENTALS, PRICE_HISTORY, SECTOR_PERFORMANCE
 from src.tools.resolve_ticker import TickerResolution
 
 
 def test_graph_resolves_company_and_dispatches(monkeypatch):
-    monkeypatch.setattr(parse_module, "extract_companies", lambda user_query: ["Nvidia"])
-    monkeypatch.setattr(dispatch_module, "choose_workers", lambda user_query, company_name, ticker: ["financials"])
-    result = graph.invoke({"user_query": "What are Nvidia's margins?"})
+    result = run_graph(monkeypatch, ["financials"])
     assert result["resolution"].ticker == "NVDA"
     assert result["mandates_dispatched"] == ["financials"]
 
@@ -44,8 +43,15 @@ def test_route_after_parse(resolution, question, expected):
 ALL = ["price_history", "sector_performance", "financials"]
 
 
+THESIS = Thesis(summary="stub thesis", bull_points=[], bear_points=[], missing=[])
+
+
 def run_graph(monkeypatch, workers, sector_error=None):
-    """Run the whole graph with Gemini and the three fetch tools stubbed."""
+    """Run the whole graph with Gemini and the three fetch tools stubbed.
+
+    Records each synthesize call in `synthesize_calls` on the returned result."""
+    synthesize_calls = []
+    monkeypatch.setattr(synthesize_module, "write_thesis", lambda *args: synthesize_calls.append(args) or THESIS)
     monkeypatch.setattr(parse_module, "extract_companies", lambda user_query: ["Nvidia"])
     monkeypatch.setattr(dispatch_module, "choose_workers", lambda user_query, company_name, ticker: workers)
     monkeypatch.setattr(price_history_module, "fetch_price_history", lambda ticker: PRICE_HISTORY)
@@ -57,7 +63,9 @@ def run_graph(monkeypatch, workers, sector_error=None):
         return SECTOR_PERFORMANCE
 
     monkeypatch.setattr(sector_performance_module, "fetch_sector_performance", fetch_sector)
-    return graph.invoke({"user_query": "Should I buy Nvidia?"})
+    result = graph.invoke({"user_query": "Should I buy Nvidia?"})
+    result["synthesize_calls"] = synthesize_calls
+    return result
 
 
 def test_single_worker_dispatched_gives_one_finding(monkeypatch):
@@ -85,3 +93,15 @@ def test_failed_worker_does_not_stop_the_run(monkeypatch):
 def test_route_after_dispatch_returns_mandates():
     state = AgentState(user_query="q", mandates_dispatched=["price_history", "financials"])
     assert route_after_dispatch(state) == ["price_history", "financials"]
+
+
+def test_synthesize_runs_once_and_sets_thesis(monkeypatch):
+    result = run_graph(monkeypatch, ALL)
+    assert result["thesis"] == THESIS
+    assert len(result["synthesize_calls"]) == 1  # three parallel workers, one synthesize run
+
+
+def test_synthesize_runs_once_for_single_worker(monkeypatch):
+    result = run_graph(monkeypatch, ["financials"])
+    assert result["thesis"] == THESIS
+    assert len(result["synthesize_calls"]) == 1

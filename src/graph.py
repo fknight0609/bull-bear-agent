@@ -9,6 +9,7 @@ from src.nodes.financials import financials
 from src.nodes.parse_query import parse_query
 from src.nodes.price_history import price_history
 from src.nodes.sector_performance import sector_performance
+from src.nodes.synthesize import synthesize
 from src.state import AgentState, WorkerName
 
 WORKERS = {"price_history": price_history, "sector_performance": sector_performance, "financials": financials}
@@ -31,13 +32,15 @@ def build_graph():
     builder = StateGraph(AgentState)
     builder.add_node("parse_query", parse_query)
     builder.add_node("dispatch", dispatch)
+    builder.add_node("synthesize", synthesize)
     for name, node in WORKERS.items():
         builder.add_node(name, node)
     builder.add_edge(START, "parse_query")
     builder.add_conditional_edges("parse_query", route_after_parse, ["dispatch", END])
     builder.add_conditional_edges("dispatch", route_after_dispatch, list(WORKERS))
     for name in WORKERS:
-        builder.add_edge(name, END)  # these become edges to "synthesize" once it exists
+        builder.add_edge(name, "synthesize")  # plain per-worker edges, not a join (PLAN decision 5)
+    builder.add_edge("synthesize", END)
     return builder.compile()
 
 
