@@ -10,13 +10,13 @@ from src.tools.fetch_sector_performance import SectorPerformance
 from src.tools.resolve_ticker import TickerResolution
 
 PRICE_HISTORY = PriceHistory(
-    start_price=100.0, end_price=110.0, pct_change_30d=10.0, high_30d=112.0, low_30d=98.0,
-    drawdown_from_high=1.8, avg_volume_30d=1e6, volume_trend=0.1, sma_5=108.0, sma_20=105.0,
-    price_vs_sma20="above", volatility_30d=0.3,
+    start_price=100.0, end_price=110.0, pct_change_30d=0.10, high_30d=112.0, low_30d=98.0,
+    drawdown_from_high=-0.018, avg_volume_30d=1e6, volume_trend=1.1, sma_5=108.0, sma_20=105.0,
+    price_vs_sma20="above", volatility_30d=0.03,
 )
 SECTOR_PERFORMANCE = SectorPerformance(
-    sector="Technology", etf_proxy="XLK", pct_change_30d=4.0, high_30d=210.0, low_30d=195.0,
-    sma_20=200.0, price_vs_sma20="above", volatility_30d=0.2,
+    sector="Technology", etf_proxy="XLK", pct_change_30d=0.04, high_30d=210.0, low_30d=195.0,
+    sma_20=200.0, price_vs_sma20="above", volatility_30d=0.02,
 )
 FUNDAMENTALS = Fundamentals(
     gross_margin=0.7, operating_margin=0.5, net_margin=0.4, revenue_growth_yoy=0.3,

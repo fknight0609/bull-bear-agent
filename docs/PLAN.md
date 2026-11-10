@@ -15,7 +15,7 @@ Update it when a decision changes.
 | Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | done |
 | dispatch node (`parse_query → dispatch → END`; shared Gemini client in `src/llm.py`) | done, check in debug UI |
 | Worker nodes (x3) + fan-out edge after dispatch | done, check in debug UI |
-| synthesize node + `Thesis` model | next |
+| synthesize node + `Thesis` model | done, check in debug UI |
 | Reviewer loop | later |
 | Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
 | Supabase database | later, use not decided yet |
@@ -70,6 +70,24 @@ parse_query
 8. **Dispatch falls back to all three workers** when Gemini picks none or the
    call fails. The company is already resolved, so a vague question gets the
    full picture rather than another clarifying question.
+9. **`Thesis` shape.** `summary` (answers the user's question first), then
+   `bull_points` and `bear_points`, each a `ThesisPoint` (`claim` plus
+   `evidence`: keys like `financials.gross_margin` or
+   `derived.relative_return_30d`), and `missing` (what was unavailable). No
+   buy/sell instruction. Evidence keys make every claim traceable to the data
+   dict, so rule 1 can be checked rather than trusted.
+10. **Cross-source arithmetic lives inside synthesize, not in state.**
+    `build_data` (pure Python, rule 2) formats fractions as percentage strings,
+    rounds the rest, and adds a `derived` section (currently
+    `relative_return_30d` = stock minus sector 30-day return, only when both
+    were fetched). The data dict goes to Gemini and is not stored in state, since the UI
+    doesn't show it. Move it into state if a UI ever needs it.
+11. **synthesize never crashes the run, and checks Gemini's output.** Evidence
+    keys not present in the data dict are dropped with a warning. With no
+    successful finding it returns a fixed "no data" thesis and does not call
+    Gemini. If Gemini fails it returns a thesis whose summary says synthesis
+    failed. `missing` lists errored workers (with the message) and workers that
+    weren't dispatched.
 
 ## State schema (`src/state.py`)
 
@@ -84,6 +102,7 @@ dict of only the changed keys.
 | `clarifying_question` | `Optional[str]` | parse_query |
 | `mandates_dispatched` | `list[WorkerName]` | dispatch |
 | `findings` | `Annotated[list[Finding], operator.add]` | workers |
+| `thesis` | `Optional[Thesis]` | synthesize |
 | `ticker` | read-only property from `resolution` | — |
 
 - `Finding` = `source: WorkerName` + `data` (one of the three tool models)
@@ -93,8 +112,7 @@ dict of only the changed keys.
   the same step. Without one, LangGraph raises `InvalidUpdateError`. Keys
   written in different steps just overwrite. Only `findings` has one.
 - No separate stored `ticker`, so it can't drift from `resolution`.
-- `thesis` and `review_round` are added when synthesize and the reviewer are
-  built.
+- `review_round` is added when the reviewer is built.
 
 ## Deployment (later)
 
@@ -138,9 +156,6 @@ through the nodes.
 
 ## Open questions
 
-- **synthesize:** the `Thesis` model shape. Where cross-source arithmetic
-  (e.g. stock return minus sector return) lives: in state if the UI shows it,
-  otherwise inside synthesize. Either way it is computed in Python (rule 2).
 - **Reviewer loop (later):** a `review_round` cap of 1–2. On a re-run,
   `operator.add` keeps the old finding next to the new one. Decide whether
   that's wanted, or use a reducer that replaces findings by `source`.

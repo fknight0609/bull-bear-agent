@@ -27,6 +27,20 @@ class Finding(BaseModel):
         return self
 
 
+class ThesisPoint(BaseModel):
+    """One claim in the thesis, with the data keys that support it."""
+
+    claim: str
+    evidence: list[str]  # keys into the synthesize data dict, e.g. "financials.gross_margin"
+
+
+class Thesis(BaseModel):
+    summary: str
+    bull_points: list[ThesisPoint]
+    bear_points: list[ThesisPoint]
+    missing: list[str]
+
+
 class AgentState(BaseModel):
     user_query: str
     company_name: Optional[str] = None
@@ -34,6 +48,7 @@ class AgentState(BaseModel):
     clarifying_question: Optional[str] = None
     mandates_dispatched: list[WorkerName] = []  # written only by dispatch
     findings: Annotated[list[Finding], operator.add] = []  # fan-in: each worker appends one
+    thesis: Optional[Thesis] = None  # written only by synthesize
 
     @property
     def ticker(self) -> Optional[str]:

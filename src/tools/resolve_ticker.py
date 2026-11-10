@@ -1,6 +1,7 @@
 """Deterministic company-name -> ticker lookup from a local CSV file."""
 
 import csv
+import re
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -16,21 +17,29 @@ class TickerResolution(BaseModel):
 
 
 def resolve_ticker(company: str, data_path: Path = DEFAULT_DATA_PATH) -> TickerResolution:
-    """Look up `company` in the tickers CSV via case-insensitive substring match."""
+    """Look up `company` in the tickers CSV, preferring the closest kind of name match.
+
+    Match tiers, best first: the name starts with the query as a whole word ("Ford" -> "Ford Motor",
+    not "Ashford"); the query appears as a whole word anywhere; plain case-insensitive substring.
+    Only the best non-empty tier is used."""
     query = company.strip().lower()
     if not query:
         return TickerResolution(is_present="no")
 
-    matched_tickers: set[str] = set()
-    matched_names: set[str] = set()
+    escaped = re.escape(query)
+    tiers = [re.compile(rf"^{escaped}(?!\w)"), re.compile(rf"(?<!\w){escaped}(?!\w)"), re.compile(escaped)]
+    matches: list[dict[str, str]] = [{} for _ in tiers]  # per tier: ticker -> company name
     with open(data_path, newline="", encoding="utf-8") as f:
         for row in csv.DictReader(f):
-            if query in row["company"].strip().lower():
-                matched_tickers.add(row["ticker"].strip())
-                matched_names.add(row["company"].strip())
+            name = row["company"].strip()
+            for tier, pattern in zip(matches, tiers):
+                if pattern.search(name.lower()):
+                    tier[row["ticker"].strip()] = name
+                    break  # a name counts only in its best tier
 
-    if not matched_tickers:
+    best = next((tier for tier in matches if tier), {})
+    if not best:
         return TickerResolution(is_present="no")
-    if len(matched_tickers) > 1:
-        return TickerResolution(is_present="ambiguous", candidates=sorted(matched_names))
-    return TickerResolution(is_present="yes", ticker=next(iter(matched_tickers)))
+    if len(best) > 1:
+        return TickerResolution(is_present="ambiguous", candidates=sorted(set(best.values())))
+    return TickerResolution(is_present="yes", ticker=next(iter(best)))
