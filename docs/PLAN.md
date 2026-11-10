@@ -10,13 +10,14 @@ Update it when a decision changes.
 |---|---|
 | Fetch tools: price history, sector performance, financials | done |
 | resolve_ticker tool (CSV lookup) | done |
+| Ticker data: ~6.4k US + UK listings (`scripts/build_tickers.py`) and ranked name matching in `resolve_ticker` | done |
 | parse_query node (Gemini extracts company, resolves ticker, or asks to clarify) | done |
 | State schema (`src/state.py`) + CLAUDE.md architecture update | done |
 | Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | done |
-| dispatch node (`parse_query → dispatch → END`; shared Gemini client in `src/llm.py`) | done, check in debug UI |
+| dispatch node (Gemini picks workers; shared Gemini client in `src/llm.py`) | done, check in debug UI |
 | Worker nodes (x3) + fan-out edge after dispatch | done, check in debug UI |
 | synthesize node + `Thesis` model | done, check in debug UI |
-| Reviewer loop | later |
+| Reviewer loop | next, once the thesis has been checked live in the debug UI |
 | Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
 | Supabase database | later, use not decided yet |
 
@@ -86,8 +87,26 @@ parse_query
     keys not present in the data dict are dropped with a warning. With no
     successful finding it returns a fixed "no data" thesis and does not call
     Gemini. If Gemini fails it returns a thesis whose summary says synthesis
-    failed. `missing` lists errored workers (with the message) and workers that
-    weren't dispatched.
+    failed. `build_data(findings, mandates_dispatched)` builds the `missing`
+    list (errored workers with the message, plus workers that weren't
+    dispatched). The fallback theses use it as is; on the normal path Gemini
+    writes `Thesis.missing` from it and could omit an item. A point whose
+    evidence keys are all dropped is kept with empty `evidence`.
+12. **Ticker matching is ranked, not plain substring.** `resolve_ticker` tries
+    three tiers and uses only the best non-empty one: the name starts with the
+    query as a whole word ("Ford" → Ford Motor, not Ashford), then the query
+    as a whole word anywhere, then plain substring. Several matches in the
+    chosen tier are `ambiguous` with `candidates`, so "Apple" and "Alphabet"
+    still ask which one. Substring-only matching was fine for 18 rows but made
+    "Meta", "Visa" and "Intel" ambiguous once the list grew.
+13. **Ticker data is generated, not hand-edited.** `src/tools/data/tickers.csv`
+    (`company,ticker,exchange`) is rebuilt by `scripts/build_tickers.py` from
+    NASDAQ Trader's symbol directory (US common equity only: no ETFs, test
+    symbols, warrants, rights, preferreds, notes or units) and the FTSE 100,
+    FTSE 250 and FTSE SmallCap tables on Wikipedia (UK). Tickers are in Yahoo
+    Finance form, which is what the fetch tools use: `BRK-B`, `HSBA.L`. Names
+    that would collide get the ticker appended, e.g. `Berkshire Hathaway Inc.
+    (BRK-B)`.
 
 ## State schema (`src/state.py`)
 
@@ -156,6 +175,20 @@ through the nodes.
 
 ## Open questions
 
+- **Ticker coverage:** UK is FTSE 100/250/SmallCap only (about 430 names, and
+  the SmallCap table is partial), not every LSE listing. No free official UK
+  list was found. yfinance coverage of every ticker is unchecked.
+- **Aliases:** the lookup matches company names only, so "Google" (Alphabet)
+  and "AMD" (Advanced Micro Devices) don't resolve. Needs an alias list or a
+  Gemini suggestion checked against the CSV.
+- **Dual listings:** a company listed in both the US and UK ("Shell", "HSBC",
+  "AstraZeneca") comes back `ambiguous`. Decide whether to prefer the US line,
+  or ask the user.
+- **Exchange codes:** 10 rows have an unidentified exchange code in the NASDAQ
+  Trader file and are labelled `US`. The column isn't used by the resolver.
+- **First live run:** synthesize has only run against stubs. Check the thesis
+  in the debug UI (answers the question, evidence keys sensible) before
+  building the reviewer.
 - **Reviewer loop (later):** a `review_round` cap of 1–2. On a re-run,
   `operator.add` keeps the old finding next to the new one. Decide whether
   that's wanted, or use a reducer that replaces findings by `source`.
