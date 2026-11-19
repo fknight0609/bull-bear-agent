@@ -10,13 +10,15 @@ Update it when a decision changes.
 |---|---|
 | Fetch tools: price history, sector performance, financials | done |
 | resolve_ticker tool (CSV lookup) | done |
+| Ticker data: ~6.4k US + UK listings (`scripts/build_tickers.py`) and ranked name matching in `resolve_ticker` | done |
 | parse_query node (Gemini extracts company, resolves ticker, or asks to clarify) | done |
 | State schema (`src/state.py`) + CLAUDE.md architecture update | done |
 | Minimal graph (`START → parse_query → END`) + debug UI (`app.py` prints final state as JSON) | done |
-| dispatch node (`parse_query → dispatch → END`; shared Gemini client in `src/llm.py`) | done, check in debug UI |
-| Worker nodes (x3) + fan-out edge after dispatch | done, check in debug UI |
-| synthesize node + `Thesis` model | done, check in debug UI |
-| Reviewer loop | later |
+| dispatch node (Gemini picks workers; shared Gemini client in `src/llm.py`) | done, run live locally in the debug UI |
+| Worker nodes (x3) + fan-out edge after dispatch | done, run live locally in the debug UI |
+| synthesize node + `Thesis` model | done, run live locally in the debug UI |
+| Reviewer loop | next |
+| FastAPI endpoint, run locally (uvicorn + curl) | later, first step of deploy |
 | Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
 | Supabase database | later, use not decided yet |
 
@@ -86,8 +88,26 @@ parse_query
     keys not present in the data dict are dropped with a warning. With no
     successful finding it returns a fixed "no data" thesis and does not call
     Gemini. If Gemini fails it returns a thesis whose summary says synthesis
-    failed. `missing` lists errored workers (with the message) and workers that
-    weren't dispatched.
+    failed. `build_data(findings, mandates_dispatched)` builds the `missing`
+    list (errored workers with the message, plus workers that weren't
+    dispatched). The fallback theses use it as is; on the normal path Gemini
+    writes `Thesis.missing` from it and could omit an item. A point whose
+    evidence keys are all dropped is kept with empty `evidence`.
+12. **Ticker matching is ranked, not plain substring.** `resolve_ticker` tries
+    three tiers and uses only the best non-empty one: the name starts with the
+    query as a whole word ("Ford" → Ford Motor, not Ashford), then the query
+    as a whole word anywhere, then plain substring. Several matches in the
+    chosen tier are `ambiguous` with `candidates`, so "Apple" and "Alphabet"
+    still ask which one. Substring-only matching was fine for 18 rows but made
+    "Meta", "Visa" and "Intel" ambiguous once the list grew.
+13. **Ticker data is generated, not hand-edited.** `src/tools/data/tickers.csv`
+    (`company,ticker,exchange`) is rebuilt by `scripts/build_tickers.py` from
+    NASDAQ Trader's symbol directory (US common equity only: no ETFs, test
+    symbols, warrants, rights, preferreds, notes or units) and the FTSE 100,
+    FTSE 250 and FTSE SmallCap tables on Wikipedia (UK). Tickers are in Yahoo
+    Finance form, which is what the fetch tools use: `BRK-B`, `HSBA.L`. Names
+    that would collide get the ticker appended, e.g. `Berkshire Hathaway Inc.
+    (BRK-B)`.
 
 ## State schema (`src/state.py`)
 
@@ -125,29 +145,68 @@ Next.js (React) frontend ──HTTP──→ FastAPI (Vercel Python function) �
 
 - Keep Streamlit as the local debug UI until synthesize works end to end.
   Building a React UI earlier means reworking it each time the state changes.
-- FastAPI exposes one endpoint, roughly `POST /research {query} → final state`.
+- **Why FastAPI.** The Next.js frontend runs JavaScript and can't run the
+  Python graph, and `GEMINI_API_KEY` must stay server-side. FastAPI is a thin
+  HTTP layer: `POST /research {query}` → `graph.invoke({"user_query": query})`
+  → final state as JSON. It holds no business logic, and `src/` is unchanged.
+  The Pydantic state serialises directly. Any Python HTTP handler would work;
+  FastAPI was chosen for native Pydantic, Vercel Python support, local
+  `uvicorn` runs and the `/docs` page.
 - `src/` doesn't change (hard rule 3). Only the UI layer is replaced.
 - When this starts, update the CLAUDE.md Stack section, which currently says
   Streamlit and "do not substitute without asking".
 - Add `requirements.txt` first. The repo has none, and every host needs one.
 
 **Check before committing to Vercel for the backend:**
-1. **Function timeout.** A full run makes several Gemini calls plus yfinance
-   fetches. Time a real run and compare it with the limit for your Vercel plan.
+1. **Function timeout.** Limits per the Vercel docs (checked 2026-11-18):
+   Hobby 300 s default and max; Pro/Enterprise 300 s default, 800 s max
+   (1800 s in beta). A run is expected to take ~10–40 s (not yet timed). The
+   Hobby plan is for non-commercial use only.
 2. **Bundle size.** pandas, numpy, yfinance and langgraph are large. Try an
    early throwaway deploy to see whether they fit.
 
 **Fallback:** keep the frontend on Vercel and host only the Python API on
 Cloud Run or Render. The frontend code stays the same.
 
+**Request model, in order:**
+1. Synchronous `POST /research` first.
+2. Add streaming via `graph.stream()` if waiting with no feedback feels bad.
+   This is still one request.
+3. Async job + poll only if runs approach the limit (e.g. a reviewer loop with
+   many rounds).
+
+Vercel has no always-on workers. Vercel Workflows/Queues exist, but their
+Python support is unverified. If real workers are needed, use Cloud Run or
+Render.
+
+**Risk:** the Gemini free-tier quota (~20 requests/day, ~3–4 per run) and
+yfinance rate limits from cloud IPs will likely bind before any Vercel limit.
+
 ## Database (later): Supabase
 
-What it stores isn't decided yet. Candidates:
-- **Research history:** past queries and theses per user.
+Supabase is one Postgres database. "Vector" means the optional `pgvector`
+extension in that same database, not a separate DB. It isn't needed now. It
+would only be for semantic search over past theses or documents (RAG) later.
+
+What it stores isn't fully decided. Candidates:
+- **Research history (first use):** past queries and theses. Sketch of a
+  `runs` table:
+
+  | Column | Type | Note |
+  |---|---|---|
+  | `id` | uuid | primary key |
+  | `user_query` | text | |
+  | `ticker` | text | |
+  | `thesis` | jsonb | the `Thesis` model |
+  | `findings` | jsonb | optional |
+  | `created_at` | timestamptz | |
+  | `user_id` | uuid | later, with Supabase Auth |
+
 - **Users and auth:** Supabase Auth, if the app gets logins.
-- **Graph checkpointer:** Supabase is Postgres, so LangGraph's Postgres
-  checkpointer can use it. This is the likely solution for multi-turn
-  clarification (see open questions).
+- **Graph checkpointer:** LangGraph's Postgres checkpointer can use Supabase.
+  This is separate from run history: `runs` holds finished results, while the
+  checkpointer holds mid-run state. It is only needed for multi-turn
+  clarification (see open questions), later.
 - **Fetch cache:** store yfinance results to cut latency and rate-limit risk.
 
 Constraints that carry over: credentials go in `.env`, tests don't make live
@@ -156,6 +215,17 @@ through the nodes.
 
 ## Open questions
 
+- **Ticker coverage:** UK is FTSE 100/250/SmallCap only (about 430 names, and
+  the SmallCap table is partial), not every LSE listing. No free official UK
+  list was found. yfinance coverage of every ticker is unchecked.
+- **Aliases:** the lookup matches company names only, so "Google" (Alphabet)
+  and "AMD" (Advanced Micro Devices) don't resolve. Needs an alias list or a
+  Gemini suggestion checked against the CSV.
+- **Dual listings:** a company listed in both the US and UK ("Shell", "HSBC",
+  "AstraZeneca") comes back `ambiguous`. Decide whether to prefer the US line,
+  or ask the user.
+- **Exchange codes:** 10 rows have an unidentified exchange code in the NASDAQ
+  Trader file and are labelled `US`. The column isn't used by the resolver.
 - **Reviewer loop (later):** a `review_round` cap of 1–2. On a re-run,
   `operator.add` keeps the old finding next to the new one. Decide whether
   that's wanted, or use a reducer that replaces findings by `source`.
