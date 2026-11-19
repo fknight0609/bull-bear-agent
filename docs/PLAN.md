@@ -22,8 +22,9 @@ Update it when a decision changes.
 | Gemini client timeout and retry (`src/llm.py`), model `gemini-3.1-flash-lite` | done, live run through the API worked |
 | Model fallback on retry | backlog |
 | `requirements.txt` (runtime) and `requirements-dev.txt`, `pytest.ini` | done |
-| Vercel config (`vercel.json` with `maxDuration` 100, `.vercelignore`) | written, not yet deployed |
-| Preview deploy to Vercel (`vercel deploy`, not `--prod`) | next |
+| Vercel config (`vercel.json` with `maxDuration` 100, `.vercelignore`) | done |
+| Deploy to Vercel (project `bull-bear-agent`, GitHub connected) | done: live in production, `/health`, `/docs` and a live `POST /research` checked; open to the public, see Backlog |
+| UI redo, rate limit, disclaimer, API key | backlog, before the URL is shared |
 | Next.js frontend (replaces Streamlit for users) | later |
 | Supabase database | later, use not decided yet |
 
@@ -172,9 +173,10 @@ dict of only the changed keys.
 
 ## Deployment
 
-Target host is **Vercel**. The API layer and the Vercel config exist (decision
-14, `vercel.json`, `.vercelignore`); nothing is deployed yet. Streamlit can't run there: it needs a long-running
-server with a WebSocket per browser, and Vercel runs short-lived functions.
+Target host is **Vercel**, and the API is deployed there (project
+`bull-bear-agent`, production alias `bull-bear-agent.vercel.app`). Streamlit
+can't run there: it needs a long-running server with a WebSocket per browser,
+and Vercel runs short-lived functions.
 
 ```
 Next.js (React) frontend ──HTTP──→ FastAPI (Vercel Python function) ──→ graph.invoke(...)
@@ -193,23 +195,43 @@ Next.js (React) frontend ──HTTP──→ FastAPI (Vercel Python function) �
 - The CLAUDE.md Stack section now lists FastAPI (`api/index.py`) as the HTTP
   layer for deploys and Streamlit as the local debug UI.
 - `requirements.txt` (runtime only, pinned) and `requirements-dev.txt` exist.
-- `vercel.json` rewrites all paths to `api/index.py` and sets `maxDuration` to
-  100 with `includeFiles: "src/**"`, so `tickers.csv` and the prompt files are
-  bundled. `.vercelignore` excludes tests, scripts, `src/temp/`, `app.py`,
-  `.env`, `.venv`, `__pycache__` and `docs/`. The root `app.py` is Streamlit,
-  so the explicit `api/index.py` entrypoint is kept even if Vercel's zero-config
-  FastAPI detection would work without `vercel.json` (unchecked).
+- `vercel.json` sets `maxDuration` to 100 and `includeFiles: "src/**"` for
+  `api/index.py`, so `tickers.csv` and the prompt files are bundled.
+  **No rewrite:** Vercel's FastAPI runtime already routes every path to the
+  app. A first version rewrote `/(.*)` to `/api/index`, which made FastAPI see
+  that path and return 404 for `/health` and `/docs`.
+- `.vercelignore` excludes tests, scripts, `src/temp/`, `app.py`, `.env`,
+  `.venv`, `__pycache__`, `docs/`, `.env.local` and `.vercel`. The root
+  `app.py` is Streamlit, so it is excluded and `api/index.py` is the
+  entrypoint.
 - Env vars `GEMINI_API_KEY` and `ALLOWED_ORIGINS` are set in the Vercel
-  project, never in files. `EXPOSE_ERRORS` must not be set there.
+  project (Preview and Production, marked sensitive), never in files.
+  `EXPOSE_ERRORS` is not set there and must not be.
+- **Git is connected** (GitHub `fknight0609/bull-bear-agent`). A push to any
+  branch builds a preview and a PR gets a Vercel comment with its link. A
+  merge into `main` deploys to production automatically.
+- **A project's first deployment goes to production.** Ours did, so the first
+  (broken-rewrite) build briefly sat behind the production alias until a
+  `--prod` deploy and then the PR merge replaced it.
+- **The production domain is public.** Deployment Protection covers previews
+  but not the production alias, so anyone who finds the URL can call
+  `POST /research` and use Gemini quota. Accepted for now; see Backlog.
+- `vercel curl` against a protected preview created a "Protection Bypass for
+  Automation" secret on the project. It stays until revoked (Project Settings →
+  Deployment Protection).
+- Check the deployed app with `vercel curl <url>/health` (previews) or plain
+  `curl` (production). Function logs: dashboard → Logs, or
+  `vercel logs --deployment <url>`.
 
 **Check before committing to Vercel for the backend:**
 1. **Function timeout.** Limits per the Vercel docs (checked 2026-11-18):
    Hobby 300 s default and max; Pro/Enterprise 300 s default, 800 s max
-   (1800 s in beta). We set 100 s on purpose (decision 15). A run is expected
-   to take ~10–40 s (not yet timed live). The Hobby plan is for
+   (1800 s in beta). We set 100 s on purpose (decision 15). One live run on
+   the preview took 24 s ("What is Nvidia's gross margin?", one worker, so a
+   three-worker query will take longer). The Hobby plan is for
    non-commercial use only.
-2. **Bundle size.** pandas, numpy, yfinance and langgraph are large. Try an
-   early throwaway deploy to see whether they fit.
+2. **Bundle size.** Checked: the function is 70.7 MB, and the build took
+   about 35 s.
 
 **Fallback:** keep the frontend on Vercel and host only the Python API on
 Cloud Run or Render. The frontend code stays the same.
@@ -303,17 +325,14 @@ through the nodes.
 
 ## Open questions
 
-- **Run time:** `POST /research` now completes locally with
-  `gemini-3.1-flash-lite`, but the run time hasn't been recorded, so whether
-  100 s is enough is unmeasured. Check the `Graph invoke took` log line.
-- **Vercel preview deploy:** untested. Bundle size (pandas, numpy, yfinance,
-  langgraph), whether `includeFiles` picks up the data files, and zero-config
-  detection need a throwaway preview to confirm. Deployment Protection on
-  previews returns 401 until bypassed.
+- **Run time of a full query:** a one-worker query took 24 s on Vercel. A
+  "should I buy" query (all three workers) hasn't been timed, so whether 100 s
+  holds with retries is unmeasured. Check the `Graph invoke took` log line.
 - **Python version on Vercel:** the venv is 3.13 and CLAUDE.md says 3.12+. No
-  version is pinned for the deployment yet.
-- **Test runner:** `pytest.ini` sets `pythonpath = .` so bare `pytest` and
-  `python -m pytest` both work.
+  version is pinned for the deployment, and the version Vercel used wasn't
+  recorded.
+- **yfinance from Vercel:** it worked on the one live run. Yahoo may still
+  rate-limit or block cloud IPs under more traffic.
 
 - **Ticker coverage:** UK is FTSE 100/250/SmallCap only (about 430 names, and
   the SmallCap table is partial), not every LSE listing. No free official UK
