@@ -128,13 +128,6 @@ parse_query
       be set on a deployment.
     - **Input is validated at the edge.** `query` is stripped and must be 1–500
       characters, otherwise 422.
-    - **`POST /research` needs an `X-API-Key` header** matching the `API_KEY`
-      env var (compared in constant time). Wrong or missing key: 401 before the
-      graph runs, so no Gemini quota is used. `API_KEY` unset: 503, so a
-      deploy without the key is closed, not open. `/health`, `/docs` and
-      `/openapi.json` stay public; in `/docs` the Authorize button takes the
-      key. Added because the production URL is publicly reachable (Deployment
-      Protection doesn't cover it) and every call uses Gemini quota.
     - **CORS comes from the environment.** `ALLOWED_ORIGINS` (comma-separated,
       default `http://localhost:3000`), GET and POST only.
     - **Logging uses `logging.basicConfig` at INFO**, so the `advisor` lines
@@ -269,6 +262,14 @@ Supabase calls, and database access sits in its own module, not scattered
 through the nodes.
 
 ## Backlog
+
+- **API key on `POST /research` (removed, re-add later).** The production URL
+  is publicly reachable (Deployment Protection doesn't cover it) and every
+  call uses Gemini quota. An `X-API-Key` header check, compared in constant
+  time against an `API_KEY` env var, was built and then taken out for now.
+  Re-add it before the URL is shared. Fail closed (503) when `API_KEY` is
+  unset, so a deploy without the key isn't open. The key must be random, not
+  derived from the repo owner or project name (the repo is public).
 
 - **UI redo, then public sharing.** The current UI isn't ready to show. Do
   these with it, before the URL goes on a resume or LinkedIn:

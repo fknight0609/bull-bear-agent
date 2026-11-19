@@ -2,14 +2,12 @@
 
 import logging
 import os
-import secrets
 import time
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.graph import graph
@@ -25,21 +23,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-API-Key"],
+    allow_headers=["Content-Type"],
 )
-
-
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-
-
-def require_api_key(provided: str | None = Depends(api_key_header)) -> None:
-    """Reject requests without the shared key. Fails closed if API_KEY isn't configured."""
-    expected = os.environ.get("API_KEY")
-    if not expected:
-        log.error("API_KEY is not set; rejecting request")
-        raise HTTPException(status_code=503, detail="Service not configured")
-    if not provided or not secrets.compare_digest(provided.encode(), expected.encode()):
-        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 class ResearchRequest(BaseModel):
@@ -53,7 +38,7 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.post("/research", dependencies=[Depends(require_api_key)])
+@app.post("/research")
 def research(request: ResearchRequest) -> Any:
     started = time.perf_counter()
     try:

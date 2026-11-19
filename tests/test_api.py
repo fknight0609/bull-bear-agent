@@ -6,14 +6,7 @@ from fastapi.testclient import TestClient
 from api.index import app
 from src.graph import graph
 
-API_KEY = "test-key"
-client = TestClient(app, headers={"X-API-Key": API_KEY})
-anonymous = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def _api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("API_KEY", API_KEY)
+client = TestClient(app)
 
 
 def _fake_state(query: str) -> dict:
@@ -66,23 +59,3 @@ def test_expose_errors_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.status_code == 500
     assert response.json()["error"] == "RuntimeError: visible-when-enabled"
 
-
-def test_research_requires_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    called = []
-    monkeypatch.setattr(graph, "invoke", lambda state: called.append(state) or _fake_state(state["user_query"]))
-    assert anonymous.post("/research", json={"query": "Nvidia"}).status_code == 401
-    wrong = anonymous.post("/research", json={"query": "Nvidia"}, headers={"X-API-Key": "nope"})
-    assert wrong.status_code == 401
-    assert wrong.json() == {"detail": "Invalid or missing API key"}
-    assert called == []  # the graph (and Gemini) is never reached without the key
-
-
-def test_research_fails_closed_when_key_not_configured(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("API_KEY", raising=False)
-    response = client.post("/research", json={"query": "Nvidia"})
-    assert response.status_code == 503
-    assert response.json() == {"detail": "Service not configured"}
-
-
-def test_health_needs_no_key() -> None:
-    assert anonymous.get("/health").status_code == 200
