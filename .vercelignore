@@ -1,0 +1,10 @@
+tests/
+scripts/
+src/temp/
+app.py
+.env
+.venv
+__pycache__
+docs/
+.env.local
+.vercel

@@ -18,8 +18,13 @@ Update it when a decision changes.
 | Worker nodes (x3) + fan-out edge after dispatch | done, run live locally in the debug UI |
 | synthesize node + `Thesis` model | done, run live locally in the debug UI |
 | Reviewer loop | next |
-| FastAPI endpoint, run locally (uvicorn + curl) | later, first step of deploy |
-| Deploy: Next.js frontend + FastAPI on Vercel (replaces Streamlit) | later, after synthesize works end to end |
+| FastAPI endpoint (`api/index.py`: `GET /health`, `POST /research`), run locally with uvicorn + curl | done, tests in `tests/test_api.py`; a live run hit Gemini 503s and a hang before the timeout was added (decision 15) |
+| Gemini client timeout and retry (`src/llm.py`), model `gemini-3.1-flash-lite` | done, live run through the API worked |
+| Model fallback on retry | backlog |
+| `requirements.txt` (runtime) and `requirements-dev.txt`, `pytest.ini` | done |
+| Vercel config (`vercel.json` with `maxDuration` 100, `.vercelignore`) | written, not yet deployed |
+| Preview deploy to Vercel (`vercel deploy`, not `--prod`) | next |
+| Next.js frontend (replaces Streamlit for users) | later |
 | Supabase database | later, use not decided yet |
 
 ## How we build
@@ -109,6 +114,44 @@ parse_query
     that would collide get the ticker appended, e.g. `Berkshire Hathaway Inc.
     (BRK-B)`.
 
+14. **The API layer is a thin adapter.** `api/index.py` only turns HTTP into
+    `graph.invoke({"user_query": ...})` and the validated `AgentState` back
+    into JSON (`model_dump(mode="json")`, the same state the debug UI shows).
+    No business logic, and `src/` is unchanged.
+    - **Sync request first.** `POST /research` blocks until the run finishes
+      (a plain `def`, so FastAPI runs it in a threadpool). Streaming and
+      job + poll stay as later steps (see Deployment).
+    - **Errors are hidden from clients.** Any exception is logged server-side
+      with the traceback, and the client gets 500 `{"detail": "Research
+      failed"}`. For local debugging only, `EXPOSE_ERRORS=1` adds an `error`
+      field with `ExceptionType: message`. It is off by default and must not
+      be set on a deployment.
+    - **Input is validated at the edge.** `query` is stripped and must be 1–500
+      characters, otherwise 422.
+    - **`POST /research` needs an `X-API-Key` header** matching the `API_KEY`
+      env var (compared in constant time). Wrong or missing key: 401 before the
+      graph runs, so no Gemini quota is used. `API_KEY` unset: 503, so a
+      deploy without the key is closed, not open. `/health`, `/docs` and
+      `/openapi.json` stay public; in `/docs` the Authorize button takes the
+      key. Added because the production URL is publicly reachable (Deployment
+      Protection doesn't cover it) and every call uses Gemini quota.
+    - **CORS comes from the environment.** `ALLOWED_ORIGINS` (comma-separated,
+      default `http://localhost:3000`), GET and POST only.
+    - **Logging uses `logging.basicConfig` at INFO**, so the `advisor` lines
+      (including run duration) show under uvicorn and in Vercel function logs.
+15. **Gemini calls have a timeout and one retry; the function limit is 100 s.**
+    The first live runs hit `503 UNAVAILABLE` ("high demand") from
+    `gemini-3.8-flash` and one request hung for minutes, because the client had
+    no timeout. `src/llm.py` now sets a 20 s timeout per request and 2 attempts
+    (one retry; the SDK retries 408, 429 and 5xx with backoff). A run makes
+    about three sequential calls, so the worst case is roughly 3 × 2 × 20 s plus
+    backoff. That can pass 100 s only if every call hangs, and then Vercel ends
+    the function at `maxDuration` 100 (`vercel.json`), down from the earlier 300
+    s. A normal run is expected to be ~10–40 s (not yet timed live). Retry
+    attempts are not counted per run in the logs. The model was then switched
+    to `gemini-3.1-flash-lite`, and a live run through the API worked. Falling
+    back to another model on retry is in the Backlog.
+
 ## State schema (`src/state.py`)
 
 Pydantic `AgentState`. Nodes receive the model instance and return a partial
@@ -134,9 +177,10 @@ dict of only the changed keys.
 - No separate stored `ticker`, so it can't drift from `resolution`.
 - `review_round` is added when the reviewer is built.
 
-## Deployment (later)
+## Deployment
 
-Target host is **Vercel**. Streamlit can't run there: it needs a long-running
+Target host is **Vercel**. The API layer and the Vercel config exist (decision
+14, `vercel.json`, `.vercelignore`); nothing is deployed yet. Streamlit can't run there: it needs a long-running
 server with a WebSocket per browser, and Vercel runs short-lived functions.
 
 ```
@@ -153,15 +197,24 @@ Next.js (React) frontend ──HTTP──→ FastAPI (Vercel Python function) �
   FastAPI was chosen for native Pydantic, Vercel Python support, local
   `uvicorn` runs and the `/docs` page.
 - `src/` doesn't change (hard rule 3). Only the UI layer is replaced.
-- When this starts, update the CLAUDE.md Stack section, which currently says
-  Streamlit and "do not substitute without asking".
-- Add `requirements.txt` first. The repo has none, and every host needs one.
+- The CLAUDE.md Stack section now lists FastAPI (`api/index.py`) as the HTTP
+  layer for deploys and Streamlit as the local debug UI.
+- `requirements.txt` (runtime only, pinned) and `requirements-dev.txt` exist.
+- `vercel.json` rewrites all paths to `api/index.py` and sets `maxDuration` to
+  100 with `includeFiles: "src/**"`, so `tickers.csv` and the prompt files are
+  bundled. `.vercelignore` excludes tests, scripts, `src/temp/`, `app.py`,
+  `.env`, `.venv`, `__pycache__` and `docs/`. The root `app.py` is Streamlit,
+  so the explicit `api/index.py` entrypoint is kept even if Vercel's zero-config
+  FastAPI detection would work without `vercel.json` (unchecked).
+- Env vars `GEMINI_API_KEY` and `ALLOWED_ORIGINS` are set in the Vercel
+  project, never in files. `EXPOSE_ERRORS` must not be set there.
 
 **Check before committing to Vercel for the backend:**
 1. **Function timeout.** Limits per the Vercel docs (checked 2026-11-18):
    Hobby 300 s default and max; Pro/Enterprise 300 s default, 800 s max
-   (1800 s in beta). A run is expected to take ~10–40 s (not yet timed). The
-   Hobby plan is for non-commercial use only.
+   (1800 s in beta). We set 100 s on purpose (decision 15). A run is expected
+   to take ~10–40 s (not yet timed live). The Hobby plan is for
+   non-commercial use only.
 2. **Bundle size.** pandas, numpy, yfinance and langgraph are large. Try an
    early throwaway deploy to see whether they fit.
 
@@ -181,6 +234,8 @@ Render.
 
 **Risk:** the Gemini free-tier quota (~20 requests/day, ~3–4 per run) and
 yfinance rate limits from cloud IPs will likely bind before any Vercel limit.
+Gemini capacity errors (503) have already been seen locally; retries only
+help for short spikes.
 
 ## Database (later): Supabase
 
@@ -213,7 +268,51 @@ Constraints that carry over: credentials go in `.env`, tests don't make live
 Supabase calls, and database access sits in its own module, not scattered
 through the nodes.
 
+## Backlog
+
+- **UI redo, then public sharing.** The current UI isn't ready to show. Do
+  these with it, before the URL goes on a resume or LinkedIn:
+  - Per-IP rate limit or daily request cap in `api/index.py`.
+  - A "not financial advice" disclaimer, and a note that figures come from
+    yfinance (unofficial, possibly stale).
+  - A landing route or frontend at `/` (the bare URL returns 404 today).
+  - Confirm the Gemini key has no billing attached, or use a dedicated key.
+  - Decide how a frontend holds the API key. A key in browser JavaScript is
+    public, so a real frontend should call the API through its own server-side
+    route.
+  - Check git history for committed secrets before linking the repo.
+
+- **Model fallback on retry (not built).** Today a retry repeats the same
+  model, so an overloaded model fails both attempts (seen with
+  `gemini-3.8-flash`: 503s, then 504 `DEADLINE_EXCEEDED` twice). Instead, when
+  a call fails with a retryable error (timeout, 408, 429, 5xx), retry on the
+  next model in an ordered list. Sketch:
+  - One helper in `src/llm.py` wraps `generate_content`. The three nodes call
+    it instead of `client().models.generate_content`, and `MODEL` becomes an
+    ordered `MODELS` list (e.g. `gemini-3.1-flash-lite`, then `gemini-3.7-flash`
+    or another Flash model; to be picked and tested).
+  - Fall back only on retryable errors. Bad requests and auth errors (400, 401,
+    403) fail at once, since another model won't fix them.
+  - Keep the total inside the 100 s function limit: one attempt per model with
+    the 20 s timeout, and a cap on how many models to try per call.
+  - Log which model answered and why it fell back. Every model in the list must
+    support structured JSON output (`response_schema`), which the nodes use.
+  - Check how the free-tier quota counts across models before relying on it.
+  - Tests with a fake client; no live calls.
+
 ## Open questions
+
+- **Run time:** `POST /research` now completes locally with
+  `gemini-3.1-flash-lite`, but the run time hasn't been recorded, so whether
+  100 s is enough is unmeasured. Check the `Graph invoke took` log line.
+- **Vercel preview deploy:** untested. Bundle size (pandas, numpy, yfinance,
+  langgraph), whether `includeFiles` picks up the data files, and zero-config
+  detection need a throwaway preview to confirm. Deployment Protection on
+  previews returns 401 until bypassed.
+- **Python version on Vercel:** the venv is 3.13 and CLAUDE.md says 3.12+. No
+  version is pinned for the deployment yet.
+- **Test runner:** `pytest.ini` sets `pythonpath = .` so bare `pytest` and
+  `python -m pytest` both work.
 
 - **Ticker coverage:** UK is FTSE 100/250/SmallCap only (about 430 names, and
   the SmallCap table is partial), not every LSE listing. No free official UK
