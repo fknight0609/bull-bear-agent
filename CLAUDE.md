@@ -4,7 +4,8 @@ sector performance, financials), and produce a bull/bear thesis.
 
 ## Stack — do not substitute without asking
 LangGraph (Python SDK) · Gemini (google-genai)
-Streamlit · Python 3.12+ · pip + venv
+FastAPI (api/index.py) as the HTTP layer for deploys · Streamlit as the local debug UI
+Python 3.12+ · pip + venv
 
 ## Architecture
 Dynamic fan-out over a fixed set of workers (conditional edge returning a list of node names; no Send()):
@@ -41,4 +42,5 @@ Secrets via .env. Tool tests use recorded fixtures, no live network calls.
 
 ## Commands
 streamlit run app.py
+uvicorn api.index:app --reload
 pytest
